@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: secureflow
+  labels:
+    app.kubernetes.io/part-of: secureflow
+    team: platform

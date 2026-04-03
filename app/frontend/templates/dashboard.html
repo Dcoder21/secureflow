@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dashboard — SecureFlow Bank</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #0a0a1a; color: #e0e0e0; }
+        .topbar { background: #1a1a2e; padding: 16px 24px; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #2a2a3e; }
+        .topbar h1 { color: #00d4aa; font-size: 1.2rem; }
+        .topbar button { background: none; border: 1px solid #444; color: #aaa; padding: 8px 16px; border-radius: 6px; cursor: pointer; }
+        .container { max-width: 800px; margin: 0 auto; padding: 24px; }
+        .balance-card { background: linear-gradient(135deg, #1a1a2e, #16213e); border: 1px solid #2a2a3e; border-radius: 16px; padding: 32px; margin-bottom: 24px; }
+        .balance-label { color: #888; font-size: 0.9rem; }
+        .balance-amount { font-size: 2.5rem; font-weight: 700; color: #00d4aa; margin-top: 8px; }
+        .account-number { color: #666; font-size: 0.85rem; margin-top: 8px; font-family: monospace; }
+        .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 24px; }
+        .card { background: #1a1a2e; border: 1px solid #2a2a3e; border-radius: 12px; padding: 24px; }
+        .card h3 { margin-bottom: 16px; color: #fff; }
+        .form-group { margin-bottom: 12px; }
+        label { display: block; color: #aaa; font-size: 0.8rem; margin-bottom: 4px; }
+        input { width: 100%; padding: 10px; background: #0a0a1a; border: 1px solid #2a2a3e; border-radius: 6px; color: #fff; }
+        .btn { padding: 10px 20px; background: #00d4aa; color: #0a0a1a; border: none; border-radius: 6px; font-weight: 600; cursor: pointer; width: 100%; margin-top: 8px; }
+        .tx-list { list-style: none; }
+        .tx-list li { padding: 12px 0; border-bottom: 1px solid #2a2a3e; display: flex; justify-content: space-between; }
+        .tx-amount-pos { color: #00d4aa; }
+        .tx-amount-neg { color: #e74c3c; }
+        .chat-box { background: #1a1a2e; border: 1px solid #2a2a3e; border-radius: 12px; padding: 24px; margin-top: 24px; }
+        .chat-messages { height: 200px; overflow-y: auto; margin-bottom: 16px; padding: 12px; background: #0a0a1a; border-radius: 8px; }
+        .chat-msg { margin-bottom: 8px; padding: 8px 12px; border-radius: 8px; max-width: 80%; }
+        .chat-user { background: #16213e; margin-left: auto; text-align: right; }
+        .chat-bot { background: #1a2e1a; }
+        .chat-input { display: flex; gap: 8px; }
+        .chat-input input { flex: 1; }
+        .chat-input button { width: auto; padding: 10px 24px; }
+    </style>
+</head>
+<body>
+    <div class="topbar">
+        <h1>SecureFlow Bank</h1>
+        <button onclick="logout()">Sign Out</button>
+    </div>
+
+    <div class="container">
+        <div class="balance-card">
+            <div class="balance-label">Total Balance</div>
+            <div class="balance-amount" id="total-balance">$0.00</div>
+            <div class="account-number" id="account-number">Loading...</div>
+        </div>
+
+        <div class="grid">
+            <div class="card">
+                <h3>Transfer Money</h3>
+                <div class="form-group">
+                    <label>To Account Number</label>
+                    <input type="text" id="transfer-to" placeholder="Recipient account">
+                </div>
+                <div class="form-group">
+                    <label>Amount (USD)</label>
+                    <input type="number" id="transfer-amount" placeholder="0.00">
+                </div>
+                <button class="btn" onclick="transfer()">Send Money</button>
+            </div>
+
+            <div class="card">
+                <h3>Recent Transactions</h3>
+                <ul class="tx-list" id="tx-list">
+                    <li style="color: #666;">No transactions yet</li>
+                </ul>
+            </div>
+        </div>
+
+        <!-- AI Chat Assistant -->
+        <div class="chat-box">
+            <h3 style="margin-bottom: 16px;">AI Banking Assistant</h3>
+            <div class="chat-messages" id="chat-messages"></div>
+            <div class="chat-input">
+                <input type="text" id="chat-input" placeholder="Ask me anything about your account..."
+                       onkeypress="if(event.key==='Enter')sendChat()">
+                <button class="btn" onclick="sendChat()">Send</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const token = localStorage.getItem('token') || getCookie('token');
+        if (!token) window.location.href = '/';
+
+        const headers = { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` };
+
+        function getCookie(name) {
+            const v = document.cookie.match('(^|;) ?' + name + '=([^;]*)(;|$)');
+            return v ? v[2] : null;
+        }
+
+        function logout() {
+            localStorage.removeItem('token');
+            document.cookie = 'token=; Max-Age=0';
+            window.location.href = '/';
+        }
+
+        async function loadDashboard() {
+            try {
+                const resp = await fetch('/api/balance', { headers });
+                const accounts = await resp.json();
+                if (accounts.length > 0) {
+                    const total = accounts.reduce((sum, a) => sum + a.balance, 0);
+                    document.getElementById('total-balance').textContent = `$${total.toFixed(2)}`;
+                    document.getElementById('account-number').textContent = `Account: ${accounts[0].account_number}`;
+                    loadHistory(accounts[0].account_number);
+                } else {
+                    document.getElementById('account-number').textContent = 'No account — creating one...';
+                    const create = await fetch('/api/account', { method: 'POST', headers });
+                    if (create.ok) location.reload();
+                }
+            } catch (err) {
+                console.error('Dashboard load error:', err);
+            }
+        }
+
+        async function loadHistory(accountNumber) {
+            const resp = await fetch(`/api/history/${accountNumber}`, { headers });
+            const txs = await resp.json();
+            const list = document.getElementById('tx-list');
+            if (txs.length === 0) return;
+            list.innerHTML = txs.slice(0, 10).map(tx => `
+                <li>
+                    <span>${tx.description || tx.transaction_type}</span>
+                    <span class="${tx.from_account === '${accountNumber}' ? 'tx-amount-neg' : 'tx-amount-pos'}">
+                        $${tx.amount.toFixed(2)}
+                    </span>
+                </li>
+            `).join('');
+        }
+
+        async function transfer() {
+            const to = document.getElementById('transfer-to').value;
+            const amount = parseFloat(document.getElementById('transfer-amount').value);
+            const resp = await fetch('/api/balance', { headers });
+            const accounts = await resp.json();
+            if (accounts.length === 0) return alert('No account found');
+
+            const txResp = await fetch('/api/transfer', {
+                method: 'POST', headers,
+                body: JSON.stringify({ from_account: accounts[0].account_number, to_account: to, amount })
+            });
+            const data = await txResp.json();
+            alert(data.message || data.error);
+            loadDashboard();
+        }
+
+        async function sendChat() {
+            const input = document.getElementById('chat-input');
+            const msg = input.value.trim();
+            if (!msg) return;
+
+            const messages = document.getElementById('chat-messages');
+            messages.innerHTML += `<div class="chat-msg chat-user">${msg}</div>`;
+            input.value = '';
+
+            const resp = await fetch('/api/chat', {
+                method: 'POST', headers,
+                body: JSON.stringify({ message: msg })
+            });
+            const data = await resp.json();
+            messages.innerHTML += `<div class="chat-msg chat-bot">${data.response}</div>`;
+            messages.scrollTop = messages.scrollHeight;
+        }
+
+        loadDashboard();
+    </script>
+</body>
+</html>

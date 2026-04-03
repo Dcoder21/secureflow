@@ -1,0 +1,54 @@
+# =============================================================================
+# user-service Deployment — INTENTIONALLY MISCONFIGURED
+#
+# Vulnerabilities:
+#   [VULN-01] privileged: true
+#   [VULN-02] runAsUser: 0 (root)
+#   [VULN-03] hostPath mount of /etc — can read/write host configuration files
+#              e.g., /etc/passwd, /etc/shadow, /etc/kubernetes/pki/
+#   [VULN-04] readOnlyRootFilesystem: false — container FS is writable
+#   [VULN-05] cluster-admin ServiceAccount
+#   [VULN-06] No resource limits
+#   [VULN-07] image: latest tag
+# =============================================================================
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: user-service
+  namespace: secureflow
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: user-service
+  template:
+    metadata:
+      labels:
+        app: user-service
+    spec:
+      serviceAccountName: secureflow-sa   # [VULN-05]
+      containers:
+        - name: user-service
+          image: secureflow/user-service:latest   # [VULN-07]
+          securityContext:
+            privileged: true                      # [VULN-01]
+            runAsUser: 0                          # [VULN-02]
+            allowPrivilegeEscalation: true
+            readOnlyRootFilesystem: false         # [VULN-04]
+          ports:
+            - containerPort: 5000
+          envFrom:
+            - configMapRef:
+                name: app-config
+          env:
+            - name: DB_HOST
+              value: "postgres"
+          # [VULN-06] No resource limits
+          volumeMounts:
+            - name: host-etc
+              mountPath: /host-etc               # [VULN-03]
+      volumes:
+        - name: host-etc
+          hostPath:
+            path: /etc                           # [VULN-03] host /etc exposed

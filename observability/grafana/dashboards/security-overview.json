@@ -1,0 +1,184 @@
+{
+  "annotations": { "list": [] },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "liveNow": false,
+  "panels": [
+    {
+      "title": "Security Gate — Pass/Fail Rate",
+      "description": "Pipeline security gate results over time",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "bars",
+            "stacking": { "mode": "normal" }
+          }
+        },
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "Passed" }, "properties": [{ "id": "color", "value": { "fixedColor": "green", "mode": "fixed" } }] },
+          { "matcher": { "id": "byName", "options": "Failed" }, "properties": [{ "id": "color", "value": { "fixedColor": "red", "mode": "fixed" } }] }
+        ]
+      },
+      "targets": [
+        {
+          "expr": "increase(security_gate_pass_total[1d])",
+          "legendFormat": "Passed"
+        },
+        {
+          "expr": "increase(security_gate_fail_total[1d])",
+          "legendFormat": "Failed"
+        }
+      ]
+    },
+    {
+      "title": "Container Vulnerabilities by Severity",
+      "description": "Trivy scan findings across all service images — trending down is the goal",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 20,
+            "pointSize": 5
+          }
+        },
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "Critical" }, "properties": [{ "id": "color", "value": { "fixedColor": "dark-red", "mode": "fixed" } }] },
+          { "matcher": { "id": "byName", "options": "High" }, "properties": [{ "id": "color", "value": { "fixedColor": "orange", "mode": "fixed" } }] },
+          { "matcher": { "id": "byName", "options": "Medium" }, "properties": [{ "id": "color", "value": { "fixedColor": "yellow", "mode": "fixed" } }] },
+          { "matcher": { "id": "byName", "options": "Low" }, "properties": [{ "id": "color", "value": { "fixedColor": "blue", "mode": "fixed" } }] }
+        ]
+      },
+      "targets": [
+        { "expr": "trivy_vulnerabilities_total{severity=\"critical\"}", "legendFormat": "Critical" },
+        { "expr": "trivy_vulnerabilities_total{severity=\"high\"}", "legendFormat": "High" },
+        { "expr": "trivy_vulnerabilities_total{severity=\"medium\"}", "legendFormat": "Medium" },
+        { "expr": "trivy_vulnerabilities_total{severity=\"low\"}", "legendFormat": "Low" }
+      ]
+    },
+    {
+      "title": "Falco Runtime Alerts",
+      "description": "Runtime threat detections by rule — spikes indicate potential intrusion",
+      "type": "barchart",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "fieldConfig": {
+        "defaults": {
+          "custom": { "stacking": { "mode": "normal" } },
+          "color": { "mode": "palette-classic" }
+        }
+      },
+      "targets": [
+        {
+          "expr": "sum by (rule) (increase(falco_events[1h]))",
+          "legendFormat": "{{ rule }}"
+        }
+      ]
+    },
+    {
+      "title": "OPA Admission Denials",
+      "description": "Policy violations caught at the Kubernetes admission layer",
+      "type": "piechart",
+      "gridPos": { "h": 8, "w": 6, "x": 12, "y": 8 },
+      "targets": [
+        {
+          "expr": "sum by (constraint_kind) (gatekeeper_violations)",
+          "legendFormat": "{{ constraint_kind }}"
+        }
+      ]
+    },
+    {
+      "title": "Mean Time to Remediate (MTTR)",
+      "description": "Average time from critical vulnerability detection to fix — lower is better",
+      "type": "stat",
+      "gridPos": { "h": 8, "w": 6, "x": 18, "y": 8 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "h",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 24 },
+              { "color": "red", "value": 72 }
+            ]
+          }
+        }
+      },
+      "targets": [
+        {
+          "expr": "avg(vulnerability_remediation_hours{severity=\"critical\"})",
+          "legendFormat": "Critical MTTR"
+        }
+      ]
+    },
+    {
+      "title": "DAST Findings (OWASP ZAP)",
+      "description": "Dynamic scan findings from staging environment",
+      "type": "bargauge",
+      "gridPos": { "h": 6, "w": 8, "x": 0, "y": 16 },
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 3 },
+              { "color": "red", "value": 10 }
+            ]
+          }
+        }
+      },
+      "targets": [
+        { "expr": "zap_findings_total{severity=\"high\"}", "legendFormat": "High" },
+        { "expr": "zap_findings_total{severity=\"medium\"}", "legendFormat": "Medium" },
+        { "expr": "zap_findings_total{severity=\"low\"}", "legendFormat": "Low" }
+      ]
+    },
+    {
+      "title": "Secrets Rotation Status",
+      "description": "Last rotation timestamp for each service's Vault secrets",
+      "type": "table",
+      "gridPos": { "h": 6, "w": 8, "x": 8, "y": 16 },
+      "targets": [
+        {
+          "expr": "vault_secret_last_rotation_timestamp",
+          "format": "table",
+          "legendFormat": "{{ service }}"
+        }
+      ]
+    },
+    {
+      "title": "Image Signing Status",
+      "description": "Cosign verification status for deployed images",
+      "type": "stat",
+      "gridPos": { "h": 6, "w": 8, "x": 16, "y": 16 },
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            { "type": "value", "options": { "1": { "text": "SIGNED ✓", "color": "green" } } },
+            { "type": "value", "options": { "0": { "text": "UNSIGNED ✗", "color": "red" } } }
+          ]
+        }
+      },
+      "targets": [
+        { "expr": "cosign_image_signed{service=\"auth-service\"}", "legendFormat": "auth-service" },
+        { "expr": "cosign_image_signed{service=\"transaction-service\"}", "legendFormat": "transaction-service" },
+        { "expr": "cosign_image_signed{service=\"frontend\"}", "legendFormat": "frontend" }
+      ]
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 39,
+  "tags": ["secureflow", "security", "devsecops"],
+  "templating": { "list": [] },
+  "time": { "from": "now-7d", "to": "now" },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "SecureFlow — Security Overview",
+  "uid": "secureflow-security-overview"
+}

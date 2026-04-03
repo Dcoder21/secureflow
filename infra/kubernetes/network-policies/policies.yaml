@@ -1,0 +1,193 @@
+# ─────────────────────────────────────────────────────────────
+# SecureFlow Network Policies
+# Principle: default-deny, then whitelist specific traffic
+# ─────────────────────────────────────────────────────────────
+
+# ─────────────────────────────────────────
+# Default Deny All — baseline security
+# ─────────────────────────────────────────
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-all
+  namespace: secureflow
+spec:
+  podSelector: {}  # Applies to ALL pods in namespace
+  policyTypes:
+    - Ingress
+    - Egress
+---
+
+# ─────────────────────────────────────────
+# Frontend: receives external traffic,
+# can talk to auth-service and transaction-service
+# ─────────────────────────────────────────
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: frontend-policy
+  namespace: secureflow
+spec:
+  podSelector:
+    matchLabels:
+      app: frontend
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # Allow external traffic (from LoadBalancer / Ingress controller)
+    - ports:
+        - port: 5000
+          protocol: TCP
+  egress:
+    # Can talk to auth-service
+    - to:
+        - podSelector:
+            matchLabels:
+              app: auth-service
+      ports:
+        - port: 5001
+          protocol: TCP
+    # Can talk to transaction-service
+    - to:
+        - podSelector:
+            matchLabels:
+              app: transaction-service
+      ports:
+        - port: 5002
+          protocol: TCP
+    # DNS resolution
+    - to: []
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+---
+
+# ─────────────────────────────────────────
+# Auth Service: receives traffic from frontend
+# and transaction-service, can talk to postgres
+# ─────────────────────────────────────────
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: auth-service-policy
+  namespace: secureflow
+spec:
+  podSelector:
+    matchLabels:
+      app: auth-service
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # From frontend
+    - from:
+        - podSelector:
+            matchLabels:
+              app: frontend
+      ports:
+        - port: 5001
+          protocol: TCP
+    # From transaction-service (token validation)
+    - from:
+        - podSelector:
+            matchLabels:
+              app: transaction-service
+      ports:
+        - port: 5001
+          protocol: TCP
+  egress:
+    # To postgres only
+    - to:
+        - podSelector:
+            matchLabels:
+              app: postgres
+      ports:
+        - port: 5432
+          protocol: TCP
+    # DNS
+    - to: []
+      ports:
+        - port: 53
+          protocol: UDP
+---
+
+# ─────────────────────────────────────────
+# Transaction Service: receives traffic from
+# frontend only, can talk to postgres and auth-service
+# ─────────────────────────────────────────
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: transaction-service-policy
+  namespace: secureflow
+spec:
+  podSelector:
+    matchLabels:
+      app: transaction-service
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # Only from frontend
+    - from:
+        - podSelector:
+            matchLabels:
+              app: frontend
+      ports:
+        - port: 5002
+          protocol: TCP
+  egress:
+    # To postgres
+    - to:
+        - podSelector:
+            matchLabels:
+              app: postgres
+      ports:
+        - port: 5432
+          protocol: TCP
+    # To auth-service (token validation)
+    - to:
+        - podSelector:
+            matchLabels:
+              app: auth-service
+      ports:
+        - port: 5001
+          protocol: TCP
+    # DNS
+    - to: []
+      ports:
+        - port: 53
+          protocol: UDP
+---
+
+# ─────────────────────────────────────────
+# PostgreSQL: receives traffic from backend
+# services only, no egress needed
+# ─────────────────────────────────────────
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: postgres-policy
+  namespace: secureflow
+spec:
+  podSelector:
+    matchLabels:
+      app: postgres
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: auth-service
+        - podSelector:
+            matchLabels:
+              app: transaction-service
+      ports:
+        - port: 5432
+          protocol: TCP
+  egress: []  # Postgres doesn't initiate outbound connections

@@ -1,0 +1,32 @@
+# =============================================================================
+# RBAC — INTENTIONALLY OVER-PERMISSIONED
+#
+# Vulnerabilities:
+#   [VULN-01] Single shared ServiceAccount for ALL services
+#   [VULN-02] ServiceAccount bound to cluster-admin ClusterRole
+#              → Any pod can kubectl delete nodes, read all secrets cluster-wide,
+#                create new ClusterRoleBindings, etc.
+#   [VULN-03] No separation of duties — all services share the same identity
+# =============================================================================
+
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: secureflow-sa
+  namespace: secureflow
+
+---
+# [VULN-02] cluster-admin = god mode. This is the worst possible RBAC posture.
+# Fix: create per-service accounts with minimal permissions (least privilege)
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: secureflow-cluster-admin-binding
+subjects:
+  - kind: ServiceAccount
+    name: secureflow-sa
+    namespace: secureflow
+roleRef:
+  kind: ClusterRole
+  name: cluster-admin
+  apiGroup: rbac.authorization.k8s.io

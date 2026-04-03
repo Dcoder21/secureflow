@@ -1,0 +1,101 @@
+# ─────────────────────────────────────────────────────────────
+# SecureFlow — Prometheus Security Alert Rules
+# ─────────────────────────────────────────────────────────────
+
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: secureflow-security-alerts
+  namespace: monitoring
+  labels:
+    release: kube-prometheus-stack
+spec:
+  groups:
+    # ─────────────────────────────────────
+    # Falco Runtime Alerts
+    # ─────────────────────────────────────
+    - name: falco.runtime
+      rules:
+        - alert: FalcoCriticalAlert
+          expr: rate(falco_events{priority="Critical"}[5m]) > 0
+          for: 0m
+          labels:
+            severity: critical
+            team: security
+          annotations:
+            summary: "Critical Falco alert detected"
+            description: "Falco detected a critical security event in namespace {{ $labels.k8s_ns_name }}. Rule: {{ $labels.rule }}"
+
+        - alert: FalcoShellSpawned
+          expr: rate(falco_events{rule=~".*Shell Spawned.*"}[5m]) > 0
+          for: 0m
+          labels:
+            severity: high
+            team: security
+          annotations:
+            summary: "Shell spawned in container"
+            description: "A shell was spawned in pod {{ $labels.k8s_pod_name }} in namespace {{ $labels.k8s_ns_name }}"
+
+    # ─────────────────────────────────────
+    # OPA Gatekeeper Alerts
+    # ─────────────────────────────────────
+    - name: opa.admission
+      rules:
+        - alert: OPAHighDenialRate
+          expr: rate(gatekeeper_violations[15m]) > 5
+          for: 5m
+          labels:
+            severity: warning
+            team: platform
+          annotations:
+            summary: "High OPA policy violation rate"
+            description: "More than 5 admission denials per minute over 15 minutes. Someone may be trying to deploy non-compliant resources."
+
+    # ─────────────────────────────────────
+    # Container Security Alerts
+    # ─────────────────────────────────────
+    - name: container.security
+      rules:
+        - alert: ContainerRunningAsRoot
+          expr: |
+            count(
+              kube_pod_container_info{namespace="secureflow"}
+              * on(pod, namespace) group_left()
+              (kube_pod_container_security_context_run_as_user{uid="0"} == 0)
+            ) > 0
+          for: 5m
+          labels:
+            severity: warning
+            team: security
+          annotations:
+            summary: "Container running as root detected"
+            description: "A container in the secureflow namespace is running as root user"
+
+        - alert: PodRestartingFrequently
+          expr: rate(kube_pod_container_status_restarts_total{namespace="secureflow"}[1h]) > 3
+          for: 10m
+          labels:
+            severity: warning
+            team: platform
+          annotations:
+            summary: "Pod restarting frequently"
+            description: "Pod {{ $labels.pod }} has restarted more than 3 times in the last hour — potential crash loop or attack"
+
+    # ─────────────────────────────────────
+    # Pipeline Security Metrics
+    # ─────────────────────────────────────
+    - name: pipeline.security
+      rules:
+        - alert: SecurityGateFailureSpike
+          expr: |
+            (
+              sum(increase(security_gate_fail_total[24h]))
+              / sum(increase(security_gate_fail_total[24h]) + increase(security_gate_pass_total[24h]))
+            ) > 0.5
+          for: 1h
+          labels:
+            severity: warning
+            team: security
+          annotations:
+            summary: "More than 50% of builds failing security gate"
+            description: "Over half of pipeline runs in the last 24h failed the security gate. This may indicate systemic issues."

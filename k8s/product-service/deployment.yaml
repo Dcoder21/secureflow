@@ -1,0 +1,44 @@
+# =============================================================================
+# product-service Deployment — INTENTIONALLY MISCONFIGURED
+#
+# Vulnerabilities:
+#   [VULN-01] privileged: true
+#   [VULN-02] runAsUser: 0 (root)
+#   [VULN-03] allowPrivilegeEscalation: true
+#   [VULN-04] cluster-admin ServiceAccount
+#   [VULN-05] No resource limits
+#   [VULN-06] image: latest tag, no digest pinning
+# =============================================================================
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: product-service
+  namespace: secureflow
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: product-service
+  template:
+    metadata:
+      labels:
+        app: product-service
+    spec:
+      serviceAccountName: secureflow-sa   # [VULN-04]
+      containers:
+        - name: product-service
+          image: secureflow/product-service:latest   # [VULN-06]
+          securityContext:
+            privileged: true                         # [VULN-01]
+            runAsUser: 0                             # [VULN-02]
+            allowPrivilegeEscalation: true           # [VULN-03]
+          ports:
+            - containerPort: 3001
+          envFrom:
+            - configMapRef:
+                name: app-config
+          env:
+            - name: DB_HOST
+              value: "postgres"
+          # [VULN-05] No resource limits

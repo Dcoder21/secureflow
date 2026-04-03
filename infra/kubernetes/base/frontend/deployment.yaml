@@ -1,0 +1,43 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: frontend
+  namespace: secureflow
+  labels:
+    app: frontend
+    team: platform
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: frontend
+  template:
+    metadata:
+      labels:
+        app: frontend
+    spec:
+      containers:
+        - name: frontend
+          image: secureflow/frontend:latest
+          ports:
+            - containerPort: 5000
+          env:
+            - name: AUTH_SERVICE_URL
+              value: http://auth-service:5001
+            - name: TRANSACTION_SERVICE_URL
+              value: http://transaction-service:5002
+            - name: SESSION_SECRET
+              value: changeme
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: frontend
+  namespace: secureflow
+spec:
+  selector:
+    app: frontend
+  ports:
+    - port: 80
+      targetPort: 5000
+  type: LoadBalancer

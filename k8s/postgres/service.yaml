@@ -1,0 +1,16 @@
+# [VULN-01] NodePort exposes the database port directly on every node's IP
+# Anyone who can reach the node IP can attempt to connect to PostgreSQL
+# Fix: ClusterIP only — DB should never be reachable outside the cluster
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+  namespace: secureflow
+spec:
+  selector:
+    app: postgres
+  type: NodePort       # [VULN-01]
+  ports:
+    - port: 5432
+      targetPort: 5432
+      nodePort: 30543  # [VULN-01] DB accessible on node:30543

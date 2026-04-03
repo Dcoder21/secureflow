@@ -1,0 +1,78 @@
+# =============================================================================
+# SecureFlow — VULNERABLE docker-compose (local dev / demo)
+#
+# Run:  docker-compose up --build
+# Stop: docker-compose down -v
+#
+# Vulnerabilities deliberately present:
+#   [VULN-01] All credentials hardcoded in this file (Gitleaks will flag)
+#   [VULN-02] All internal service ports bound to host (0.0.0.0)
+#   [VULN-03] DB port 5432 exposed directly on host
+#   [VULN-04] order-service runs as privileged container
+#   [VULN-05] No restart policies (availability issue)
+#   [VULN-06] image: postgres:latest — non-deterministic
+# =============================================================================
+
+version: '3.8'
+
+services:
+
+  postgres:
+    image: postgres:latest      # [VULN-06]
+    environment:
+      POSTGRES_DB:       shopdb
+      POSTGRES_USER:     admin
+      POSTGRES_PASSWORD: admin123   # [VULN-01]
+    ports:
+      - "5432:5432"               # [VULN-03] DB directly on host
+    volumes:
+      - ./db/init.sql:/docker-entrypoint-initdb.d/init.sql
+    # [VULN-05] No restart policy
+
+  api-gateway:
+    build: ./services/api-gateway
+    ports:
+      - "3000:3000"               # [VULN-02]
+    environment:
+      USER_SERVICE_URL:    http://user-service:5000
+      PRODUCT_SERVICE_URL: http://product-service:3001
+      ORDER_SERVICE_URL:   http://order-service:5001
+    depends_on:
+      - user-service
+      - product-service
+      - order-service
+
+  user-service:
+    build: ./services/user-service
+    ports:
+      - "5000:5000"               # [VULN-02] internal service exposed on host
+    environment:
+      DB_HOST:    postgres
+      DB_PASSWORD: admin123        # [VULN-01]
+      JWT_SECRET:  supersecret123  # [VULN-01]
+    depends_on:
+      - postgres
+
+  product-service:
+    build: ./services/product-service
+    ports:
+      - "3001:3001"               # [VULN-02]
+    environment:
+      DB_HOST:     postgres
+      DB_PASSWORD: admin123        # [VULN-01]
+    depends_on:
+      - postgres
+
+  order-service:
+    build: ./services/order-service
+    ports:
+      - "5001:5001"               # [VULN-02]
+    environment:
+      DB_HOST:              postgres
+      DB_PASSWORD:          admin123                                    # [VULN-01]
+      AWS_ACCESS_KEY_ID:    AKIAIOSFODNN7EXAMPLE                        # [VULN-01]
+      AWS_SECRET_ACCESS_KEY: wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY # [VULN-01]
+      AWS_REGION:           us-east-1
+    privileged: true              # [VULN-04]
+    depends_on:
+      - postgres

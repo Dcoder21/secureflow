@@ -1,0 +1,5 @@
+# SecureFlow — Trivy Ignore List
+# Each entry must have a documented justification
+
+# Example: Low-risk CVE in a dev dependency not exposed at runtime
+# CVE-2023-XXXXX  # python-setuptools: only used at build time, not in final image

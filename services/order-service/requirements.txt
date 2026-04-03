@@ -1,0 +1,5 @@
+# Pinned to older versions — known CVEs for Trivy to find
+Flask==2.0.1
+psycopg2-binary==2.9.1
+requests==2.26.0
+Werkzeug==2.0.1

@@ -1,0 +1,45 @@
+# =============================================================================
+# api-gateway Deployment — INTENTIONALLY MISCONFIGURED
+#
+# Vulnerabilities:
+#   [VULN-01] privileged: true — full host kernel access from this container
+#   [VULN-02] runAsUser: 0 — runs as root
+#   [VULN-03] allowPrivilegeEscalation: true
+#   [VULN-04] hostNetwork: true — shares host network namespace
+#              Can bind to any host port, sniff host traffic
+#   [VULN-05] serviceAccountName: secureflow-sa (cluster-admin)
+#   [VULN-06] Secrets pulled from ConfigMap (plaintext), not K8s Secrets
+#   [VULN-07] No resource limits
+#   [VULN-08] image: latest tag — no digest pinning, no Cosign verification
+# =============================================================================
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api-gateway
+  namespace: secureflow
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: api-gateway
+  template:
+    metadata:
+      labels:
+        app: api-gateway
+    spec:
+      serviceAccountName: secureflow-sa   # [VULN-05] cluster-admin
+      hostNetwork: true                   # [VULN-04]
+      containers:
+        - name: api-gateway
+          image: secureflow/api-gateway:latest   # [VULN-08]
+          securityContext:
+            privileged: true                     # [VULN-01]
+            runAsUser: 0                         # [VULN-02]
+            allowPrivilegeEscalation: true       # [VULN-03]
+          ports:
+            - containerPort: 3000
+          envFrom:
+            - configMapRef:
+                name: app-config               # [VULN-06] loads all "secrets"
+          # [VULN-07] No resources.requests or resources.limits

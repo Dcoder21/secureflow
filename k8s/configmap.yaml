@@ -1,0 +1,40 @@
+# =============================================================================
+# ConfigMap — INTENTIONALLY STORES SECRETS IN PLAINTEXT
+#
+# Vulnerabilities:
+#   [VULN-01] Secrets stored in ConfigMap, not K8s Secret
+#              ConfigMaps are NOT encrypted at rest in etcd (Secrets can be with KMS)
+#              ConfigMaps are readable by anyone with 'get configmap' RBAC permission
+#   [VULN-02] All services share a single config blob — no secret isolation
+#   [VULN-03] Hardcoded credentials committed to git (Gitleaks will flag these)
+#   [VULN-04] Fake AWS credentials and Stripe test keys in plaintext
+#   [VULN-05] JWT_SECRET is a trivially guessable string
+# =============================================================================
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: app-config
+  namespace: secureflow
+data:
+  # Database
+  DB_HOST:     "postgres"
+  DB_NAME:     "shopdb"
+  DB_USER:     "admin"
+  DB_PASSWORD: "admin123"                              # [VULN-03]
+
+  # Authentication
+  JWT_SECRET:  "supersecret123"                        # [VULN-05]
+
+  # AWS — Gitleaks pattern: AKIA[0-9A-Z]{16}
+  AWS_ACCESS_KEY_ID:     "AKIAIOSFODNN7EXAMPLE"        # [VULN-03]
+  AWS_SECRET_ACCESS_KEY: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"  # [VULN-03]
+  AWS_REGION:            "us-east-1"
+
+  # Payment processor
+  STRIPE_SECRET_KEY: "sk_test_4eC39HqLyjWDarjtT1zdp7dc"  # [VULN-03]
+
+  # Internal service URLs
+  USER_SERVICE_URL:    "http://user-service:5000"
+  PRODUCT_SERVICE_URL: "http://product-service:3001"
+  ORDER_SERVICE_URL:   "http://order-service:5001"

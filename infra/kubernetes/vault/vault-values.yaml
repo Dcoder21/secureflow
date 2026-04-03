@@ -1,0 +1,40 @@
+# ─────────────────────────────────────────────────────────────
+# SecureFlow — HashiCorp Vault on EKS
+# Install: helm install vault hashicorp/vault -f vault-values.yaml -n vault
+# ─────────────────────────────────────────────────────────────
+
+server:
+  # Dev mode for learning — use HA mode in production
+  dev:
+    enabled: true
+    devRootToken: "root"  # Only for dev — Vault auto-unseals in dev mode
+
+  standalone:
+    enabled: false
+
+  resources:
+    requests:
+      memory: "256Mi"
+      cpu: "250m"
+    limits:
+      memory: "512Mi"
+      cpu: "500m"
+
+  # Audit logging — critical for compliance
+  auditStorage:
+    enabled: true
+    size: 5Gi
+
+injector:
+  enabled: true
+  resources:
+    requests:
+      memory: "64Mi"
+      cpu: "50m"
+    limits:
+      memory: "128Mi"
+      cpu: "100m"
+
+ui:
+  enabled: true
+  serviceType: ClusterIP

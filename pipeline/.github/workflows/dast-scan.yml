@@ -1,0 +1,114 @@
+name: SecureFlow DAST — OWASP ZAP
+
+on:
+  # Run after successful deployment to staging
+  workflow_run:
+    workflows: ["SecureFlow CI — Security Pipeline"]
+    types: [completed]
+    branches: [main]
+
+  # Also run weekly full scan
+  schedule:
+    - cron: "0 3 * * 1"  # Every Monday at 3 AM UTC
+
+  # Manual trigger
+  workflow_dispatch:
+    inputs:
+      scan_type:
+        description: "Scan type"
+        required: true
+        default: "baseline"
+        type: choice
+        options:
+          - baseline
+          - full
+
+env:
+  TARGET_URL: ${{ secrets.STAGING_URL }}  # e.g., https://staging.secureflow.example.com
+
+jobs:
+  # ─────────────────────────────────────────
+  # Baseline Scan — quick, runs on every deploy
+  # ─────────────────────────────────────────
+  zap-baseline:
+    name: "🔓 ZAP Baseline Scan"
+    runs-on: ubuntu-latest
+    if: >
+      (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success') ||
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.scan_type == 'baseline')
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: ZAP Baseline Scan
+        uses: zaproxy/action-baseline@v0.12.0
+        with:
+          target: ${{ env.TARGET_URL }}
+          rules_file_name: "security/zap/baseline-rules.tsv"
+          cmd_options: >
+            -j
+            -a
+            --auto
+          allow_issue_writing: true
+          fail_action: true
+          artifact_name: zap-baseline-report
+
+      - name: Parse ZAP Results for Metrics
+        if: always()
+        run: |
+          # Extract alert counts for Prometheus pushgateway
+          if [ -f "report_html.html" ]; then
+            HIGH=$(grep -c "High" report_html.html || echo "0")
+            MED=$(grep -c "Medium" report_html.html || echo "0")
+            LOW=$(grep -c "Low" report_html.html || echo "0")
+            echo "ZAP Baseline Results: High=$HIGH Medium=$MED Low=$LOW"
+            echo "zap_baseline_high=$HIGH" >> $GITHUB_ENV
+            echo "zap_baseline_medium=$MED" >> $GITHUB_ENV
+            echo "zap_baseline_low=$LOW" >> $GITHUB_ENV
+          fi
+
+      - name: Add Summary
+        if: always()
+        run: |
+          echo "### 🔓 OWASP ZAP Baseline Scan Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Severity | Count |" >> $GITHUB_STEP_SUMMARY
+          echo "|----------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| High | ${zap_baseline_high:-N/A} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Medium | ${zap_baseline_medium:-N/A} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Low | ${zap_baseline_low:-N/A} |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Full report uploaded as artifact." >> $GITHUB_STEP_SUMMARY
+
+  # ─────────────────────────────────────────
+  # Full Scan — comprehensive, runs weekly
+  # ─────────────────────────────────────────
+  zap-full:
+    name: "🔓 ZAP Full Scan"
+    runs-on: ubuntu-latest
+    if: >
+      github.event_name == 'schedule' ||
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.scan_type == 'full')
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: ZAP Full Scan
+        uses: zaproxy/action-full-scan@v0.10.0
+        with:
+          target: ${{ env.TARGET_URL }}
+          rules_file_name: "security/zap/full-scan-rules.tsv"
+          cmd_options: >
+            -j
+            -a
+            --auto
+          allow_issue_writing: true
+          artifact_name: zap-full-report
+
+      - name: Upload Full Report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: zap-full-scan-report
+          path: |
+            report_html.html
+            report_json.json
+          retention-days: 30

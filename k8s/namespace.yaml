@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: secureflow
+  # [VULN-01] No LimitRange — pods have no CPU/memory caps (DoS risk)
+  # [VULN-02] No ResourceQuota — namespace can consume unlimited cluster resources
+  # [VULN-03] No PodSecurityAdmission label — privileged pods allowed

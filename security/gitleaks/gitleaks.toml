@@ -1,0 +1,48 @@
+# SecureFlow — Gitleaks Configuration
+# Custom rules for detecting secrets in the codebase
+
+title = "SecureFlow Gitleaks Config"
+
+[extend]
+useDefault = true
+
+# ─────────────────────────────────────────
+# Custom Rules
+# ─────────────────────────────────────────
+
+[[rules]]
+id = "generic-api-key"
+description = "Generic API Key"
+regex = '''(?i)(api[_-]?key|apikey)\s*[:=]\s*['"]?([a-zA-Z0-9_\-]{20,})['"]?'''
+tags = ["api", "key"]
+
+[[rules]]
+id = "flask-secret-key"
+description = "Flask Secret Key"
+regex = '''(?i)(secret[_-]?key|session[_-]?secret)\s*[:=]\s*['"]?([^\s'"]{8,})['"]?'''
+tags = ["flask", "secret"]
+
+[[rules]]
+id = "jwt-secret"
+description = "JWT Secret/Signing Key"
+regex = '''(?i)(jwt[_-]?secret|jwt[_-]?key|signing[_-]?key)\s*[:=]\s*['"]?([^\s'"]{8,})['"]?'''
+tags = ["jwt", "secret"]
+
+[[rules]]
+id = "database-url"
+description = "Database Connection String"
+regex = '''(?i)(postgres|mysql|mongodb)://[^\s'"]+:[^\s'"]+@[^\s'"]+'''
+tags = ["database", "connection"]
+
+# ─────────────────────────────────────────
+# Allowlist — paths/patterns to ignore
+# ─────────────────────────────────────────
+
+[allowlist]
+description = "Allowlisted files and patterns"
+paths = [
+    '''\.gitleaks\.toml$''',
+    '''security/gitleaks/''',
+    '''docs/''',
+    '''\.md$''',
+]

@@ -1,0 +1,63 @@
+version: '3.8'
+
+services:
+
+  postgres:
+    image: postgres:15
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_MULTIPLE_DATABASES: secureflow_auth,secureflow_transactions
+    ports:
+      - "5433:5432"
+    volumes:
+      - ./postgres-init:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  auth-service:
+    build: ./auth-service
+    ports:
+      - "5011:5001"
+    environment:
+      DB_HOST: postgres
+      DB_PORT: "5432"
+      DB_NAME: secureflow_auth
+      DB_USER: postgres
+      DB_PASSWORD: postgres
+      SECRET_KEY: super-secret-key-123
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  transaction-service:
+    build: ./transaction-service
+    ports:
+      - "5012:5002"
+    environment:
+      DB_HOST: postgres
+      DB_PORT: "5432"
+      DB_NAME: secureflow_transactions
+      DB_USER: postgres
+      DB_PASSWORD: postgres
+      AUTH_SERVICE_URL: http://auth-service:5001
+    depends_on:
+      postgres:
+        condition: service_healthy
+      auth-service:
+        condition: service_started
+
+  frontend:
+    build: ./frontend
+    ports:
+      - "5010:5000"
+    environment:
+      AUTH_SERVICE_URL: http://auth-service:5001
+      TRANSACTION_SERVICE_URL: http://transaction-service:5002
+      SESSION_SECRET: changeme
+    depends_on:
+      - auth-service
+      - transaction-service

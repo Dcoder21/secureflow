@@ -1,0 +1,119 @@
+#!/bin/bash
+# ─────────────────────────────────────────────────────────────
+# SecureFlow Security Gate
+# Evaluates all scanner results and produces a pass/fail verdict
+# ─────────────────────────────────────────────────────────────
+
+set -euo pipefail
+
+RESULTS_DIR="${1:-.}"
+GATE_STATUS="PASSED"
+SUMMARY_FILE="security-summary.md"
+
+echo "## 🚦 SecureFlow Security Gate Report" > "$SUMMARY_FILE"
+echo "" >> "$SUMMARY_FILE"
+echo "| Scanner | Status | Critical | High | Details |" >> "$SUMMARY_FILE"
+echo "|---------|--------|----------|------|---------|" >> "$SUMMARY_FILE"
+
+# ─────────────────────────────────────────
+# Check Gitleaks Results
+# ─────────────────────────────────────────
+GITLEAKS_FILE=$(find "$RESULTS_DIR" -name "gitleaks.json" 2>/dev/null | head -1)
+if [ -n "$GITLEAKS_FILE" ] && [ -f "$GITLEAKS_FILE" ]; then
+    LEAKS_COUNT=$(jq 'length' "$GITLEAKS_FILE" 2>/dev/null || echo "0")
+    if [ "$LEAKS_COUNT" -gt 0 ]; then
+        echo "| 🔑 Gitleaks | ❌ FAIL | $LEAKS_COUNT secrets | — | Secrets detected in commits |" >> "$SUMMARY_FILE"
+        GATE_STATUS="FAILED"
+    else
+        echo "| 🔑 Gitleaks | ✅ PASS | 0 | — | No secrets found |" >> "$SUMMARY_FILE"
+    fi
+else
+    echo "| 🔑 Gitleaks | ⚠️ SKIP | — | — | No results found |" >> "$SUMMARY_FILE"
+fi
+
+# ─────────────────────────────────────────
+# Check SonarQube Results
+# ─────────────────────────────────────────
+SONAR_FILE=$(find "$RESULTS_DIR" -name "issues.json" -path "*/sonarqube/*" 2>/dev/null | head -1)
+if [ -n "$SONAR_FILE" ] && [ -f "$SONAR_FILE" ]; then
+    BLOCKER=$(jq '[.issues[] | select(.severity == "BLOCKER")] | length' "$SONAR_FILE" 2>/dev/null || echo "0")
+    CRITICAL=$(jq '[.issues[] | select(.severity == "CRITICAL")] | length' "$SONAR_FILE" 2>/dev/null || echo "0")
+    TOTAL_SEVERE=$((BLOCKER + CRITICAL))
+    if [ "$TOTAL_SEVERE" -gt 0 ]; then
+        echo "| 🔍 SonarQube | ❌ FAIL | $CRITICAL | $BLOCKER blocker | Critical code issues found |" >> "$SUMMARY_FILE"
+        GATE_STATUS="FAILED"
+    else
+        echo "| 🔍 SonarQube | ✅ PASS | 0 | 0 | Quality gate passed |" >> "$SUMMARY_FILE"
+    fi
+else
+    echo "| 🔍 SonarQube | ⚠️ SKIP | — | — | No results found |" >> "$SUMMARY_FILE"
+fi
+
+# ─────────────────────────────────────────
+# Check Trivy Image Scan Results
+# ─────────────────────────────────────────
+for SERVICE in auth-service transaction-service frontend; do
+    TRIVY_FILE=$(find "$RESULTS_DIR" -name "trivy-${SERVICE}.json" 2>/dev/null | head -1)
+    if [ -n "$TRIVY_FILE" ] && [ -f "$TRIVY_FILE" ]; then
+        CRIT=$(jq '[.Results[]?.Vulnerabilities[]? | select(.Severity == "CRITICAL")] | length' "$TRIVY_FILE" 2>/dev/null || echo "0")
+        HIGH=$(jq '[.Results[]?.Vulnerabilities[]? | select(.Severity == "HIGH")] | length' "$TRIVY_FILE" 2>/dev/null || echo "0")
+        if [ "$CRIT" -gt 0 ]; then
+            echo "| 📦 Trivy ($SERVICE) | ❌ FAIL | $CRIT | $HIGH | Critical CVEs in image |" >> "$SUMMARY_FILE"
+            GATE_STATUS="FAILED"
+        else
+            echo "| 📦 Trivy ($SERVICE) | ✅ PASS | 0 | $HIGH | No critical CVEs |" >> "$SUMMARY_FILE"
+        fi
+    else
+        echo "| 📦 Trivy ($SERVICE) | ⚠️ SKIP | — | — | No results |" >> "$SUMMARY_FILE"
+    fi
+done
+
+# ─────────────────────────────────────────
+# Check Checkov IaC Results
+# ─────────────────────────────────────────
+CHECKOV_FILE=$(find "$RESULTS_DIR" -name "checkov-terraform.json" 2>/dev/null | head -1)
+if [ -n "$CHECKOV_FILE" ] && [ -f "$CHECKOV_FILE" ]; then
+    FAILED_CHECKS=$(jq '.results.failed_checks | length' "$CHECKOV_FILE" 2>/dev/null || echo "0")
+    PASSED_CHECKS=$(jq '.results.passed_checks | length' "$CHECKOV_FILE" 2>/dev/null || echo "0")
+    if [ "$FAILED_CHECKS" -gt 5 ]; then
+        echo "| 🏗️ Checkov (Terraform) | ❌ FAIL | — | $FAILED_CHECKS failed | Too many IaC misconfigs |" >> "$SUMMARY_FILE"
+        GATE_STATUS="FAILED"
+    else
+        echo "| 🏗️ Checkov (Terraform) | ✅ PASS | — | $FAILED_CHECKS failed | $PASSED_CHECKS passed |" >> "$SUMMARY_FILE"
+    fi
+else
+    echo "| 🏗️ Checkov (Terraform) | ⚠️ SKIP | — | — | No results |" >> "$SUMMARY_FILE"
+fi
+
+# ─────────────────────────────────────────
+# Final Verdict
+# ─────────────────────────────────────────
+echo "" >> "$SUMMARY_FILE"
+if [ "$GATE_STATUS" = "FAILED" ]; then
+    echo "### ❌ Security Gate: FAILED" >> "$SUMMARY_FILE"
+    echo "" >> "$SUMMARY_FILE"
+    echo "This PR has been **blocked** due to critical security findings." >> "$SUMMARY_FILE"
+    echo "Please review the findings above and remediate before merging." >> "$SUMMARY_FILE"
+    echo "" >> "$SUMMARY_FILE"
+    echo "> To request an exception, add a comment with \`/security-exception\` and tag @security-team with justification." >> "$SUMMARY_FILE"
+else
+    echo "### ✅ Security Gate: PASSED" >> "$SUMMARY_FILE"
+    echo "" >> "$SUMMARY_FILE"
+    echo "All security checks passed. This PR is clear to merge." >> "$SUMMARY_FILE"
+fi
+
+echo "" >> "$SUMMARY_FILE"
+echo "---" >> "$SUMMARY_FILE"
+echo "*Generated by SecureFlow Security Pipeline at $(date -u +"%Y-%m-%d %H:%M:%S UTC")*" >> "$SUMMARY_FILE"
+
+# Print to console
+cat "$SUMMARY_FILE"
+
+# Set exit code
+if [ "$GATE_STATUS" = "FAILED" ]; then
+    echo "::error::Security gate FAILED — see report above"
+    exit 1
+fi
+
+echo "Security gate PASSED"
+exit 0

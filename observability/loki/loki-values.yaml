@@ -1,0 +1,58 @@
+# ─────────────────────────────────────────────────────────────
+# SecureFlow — Loki Configuration
+# Aggregates logs from Falco, OPA, Vault audit, and app logs
+# Deploy with: helm install loki grafana/loki-stack -f loki-values.yaml -n monitoring
+# ─────────────────────────────────────────────────────────────
+
+loki:
+  enabled: true
+  persistence:
+    enabled: true
+    size: 10Gi
+  config:
+    auth_enabled: false
+    limits_config:
+      retention_period: 30d
+    schema_config:
+      configs:
+        - from: "2024-01-01"
+          store: tsdb
+          object_store: filesystem
+          schema: v13
+          index:
+            prefix: index_
+            period: 24h
+
+promtail:
+  enabled: true
+  config:
+    snippets:
+      # Scrape security-relevant logs
+      extraScrapeConfigs: |
+        # Falco alerts
+        - job_name: falco
+          static_configs:
+            - targets: [localhost]
+              labels:
+                job: falco
+                __path__: /var/log/falco/events.log
+
+        # Vault audit logs
+        - job_name: vault-audit
+          static_configs:
+            - targets: [localhost]
+              labels:
+                job: vault-audit
+                __path__: /vault/audit/audit.log
+
+      # Add secureflow namespace label to all K8s logs
+      pipelineStages:
+        - match:
+            selector: '{namespace="secureflow"}'
+            stages:
+              - labels:
+                  app:
+                  service:
+
+grafana:
+  enabled: false  # We use standalone Grafana from kube-prometheus-stack

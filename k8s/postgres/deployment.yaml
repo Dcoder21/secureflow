@@ -1,0 +1,56 @@
+# =============================================================================
+# postgres Deployment — INTENTIONALLY MISCONFIGURED
+#
+# Vulnerabilities:
+#   [VULN-01] image: postgres:latest — non-deterministic, could pull vuln version
+#   [VULN-02] POSTGRES_PASSWORD hardcoded as plain env var (not from K8s Secret)
+#   [VULN-03] hostPath volume — container writes directly to host filesystem
+#              Escape: chroot to /proc/1/root from within the container
+#   [VULN-04] No securityContext — runs as root (uid 0)
+#   [VULN-05] No resource limits — node OOM / DoS risk
+#   [VULN-06] No readiness/liveness probes
+# =============================================================================
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postgres
+  namespace: secureflow
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postgres
+  template:
+    metadata:
+      labels:
+        app: postgres
+    spec:
+      # [VULN-04] No securityContext at pod level
+      containers:
+        - name: postgres
+          image: postgres:latest   # [VULN-01]
+          env:
+            - name: POSTGRES_DB
+              value: "shopdb"
+            - name: POSTGRES_USER
+              value: "admin"
+            - name: POSTGRES_PASSWORD
+              value: "admin123"    # [VULN-02] should be secretKeyRef
+          ports:
+            - containerPort: 5432
+          # [VULN-05] No resources.limits defined
+          # [VULN-06] No readinessProbe or livenessProbe
+          volumeMounts:
+            - name: init-sql
+              mountPath: /docker-entrypoint-initdb.d
+            - name: host-pgdata
+              mountPath: /var/lib/postgresql/data
+      volumes:
+        - name: init-sql
+          configMap:
+            name: postgres-init
+        - name: host-pgdata
+          hostPath:
+            path: /tmp/secureflow-pgdata   # [VULN-03] writes to host /tmp
+            type: DirectoryOrCreate

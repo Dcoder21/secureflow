@@ -1,0 +1,287 @@
+name: SecureFlow CI — Security Pipeline
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  AWS_REGION: us-east-1
+  ECR_REGISTRY: ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.us-east-1.amazonaws.com
+
+permissions:
+  contents: read
+  pull-requests: write
+  security-events: write
+
+jobs:
+  # ─────────────────────────────────────────────
+  # Stage 1: Secrets Detection
+  # ─────────────────────────────────────────────
+  secrets-scan:
+    name: "🔑 Secrets Scan (Gitleaks)"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Full history for scanning all commits
+
+      - name: Run Gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        with:
+          args: --config=security/gitleaks/gitleaks.toml
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Save Gitleaks Report
+        if: always()
+        run: |
+          mkdir -p security-results
+          gitleaks detect --config=security/gitleaks/gitleaks.toml --report-format=json --report-path=security-results/gitleaks.json || true
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: gitleaks-results
+          path: security-results/gitleaks.json
+
+  # ─────────────────────────────────────────────
+  # Stage 2: Static Application Security Testing
+  # ─────────────────────────────────────────────
+  sast-scan:
+    name: "🔍 SAST (SonarQube)"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: SonarQube Scan
+        uses: sonarsource/sonarqube-scan-action@master
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
+        with:
+          args: >
+            -Dsonar.projectKey=secureflow
+            -Dsonar.organization=${{ secrets.SONAR_ORG }}
+            -Dsonar.sources=app/
+            -Dsonar.python.version=3.9
+            -Dsonar.qualitygate.wait=true
+
+      - name: Export SonarQube Results
+        if: always()
+        run: |
+          mkdir -p security-results/sonarqube
+          curl -s -H "Authorization: Bearer ${{ secrets.SONAR_TOKEN }}" \
+            "${{ secrets.SONAR_HOST_URL }}/api/issues/search?projectKeys=secureflow&severities=CRITICAL,BLOCKER" \
+            > security-results/sonarqube/issues.json
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: sonarqube-results
+          path: security-results/sonarqube/
+
+  # ─────────────────────────────────────────────
+  # Stage 3: Build & Scan Container Images
+  # ─────────────────────────────────────────────
+  build-and-scan:
+    name: "📦 Build & Scan (${{ matrix.service }})"
+    runs-on: ubuntu-latest
+    needs: [secrets-scan]
+    strategy:
+      matrix:
+        service: [auth-service, transaction-service, frontend]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build Docker Image
+        run: |
+          docker build -t secureflow/${{ matrix.service }}:${{ github.sha }} \
+            ./app/${{ matrix.service }}
+
+      - name: Trivy Vulnerability Scan
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: secureflow/${{ matrix.service }}:${{ github.sha }}
+          format: json
+          output: trivy-${{ matrix.service }}.json
+          severity: CRITICAL,HIGH
+          exit-code: "1"
+          ignore-unfixed: true
+          trivyignores: security/trivy/.trivyignore
+
+      - name: Trivy SARIF Report (for GitHub Security tab)
+        if: always()
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: secureflow/${{ matrix.service }}:${{ github.sha }}
+          format: sarif
+          output: trivy-${{ matrix.service }}.sarif
+
+      - name: Upload to GitHub Security
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-${{ matrix.service }}.sarif
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: trivy-${{ matrix.service }}
+          path: trivy-${{ matrix.service }}.json
+
+  # ─────────────────────────────────────────────
+  # Stage 4: IaC Security Scanning
+  # ─────────────────────────────────────────────
+  iac-scan:
+    name: "🏗️ IaC Scan (Checkov)"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run Checkov on Terraform
+        uses: bridgecrewio/checkov-action@master
+        with:
+          directory: infra/terraform/
+          framework: terraform
+          output_format: json
+          output_file_path: security-results/checkov-terraform.json
+          soft_fail: false
+          skip_check: CKV_AWS_144,CKV_AWS_145  # Documented accepted risks
+
+      - name: Run Checkov on Kubernetes Manifests
+        if: always()
+        uses: bridgecrewio/checkov-action@master
+        with:
+          directory: infra/kubernetes/
+          framework: kubernetes
+          output_format: json
+          output_file_path: security-results/checkov-k8s.json
+          soft_fail: true  # K8s manifests are intentionally vulnerable (pre-hardening)
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: checkov-results
+          path: security-results/
+
+  # ─────────────────────────────────────────────
+  # Stage 5: Kubernetes Manifest Scanning
+  # ─────────────────────────────────────────────
+  k8s-scan:
+    name: "☸️ K8s Manifest Scan (Trivy)"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Scan Kubernetes Manifests
+        run: |
+          curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin
+          trivy config infra/kubernetes/ \
+            --severity CRITICAL,HIGH \
+            --format json \
+            --output security-results/trivy-k8s-config.json || true
+          
+          echo "### K8s Manifest Scan Summary" >> $GITHUB_STEP_SUMMARY
+          trivy config infra/kubernetes/ --severity CRITICAL,HIGH --format table >> $GITHUB_STEP_SUMMARY || true
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: trivy-k8s-config
+          path: security-results/
+
+  # ─────────────────────────────────────────────
+  # Stage 6: Security Gate
+  # ─────────────────────────────────────────────
+  security-gate:
+    name: "🚦 Security Gate"
+    runs-on: ubuntu-latest
+    needs: [secrets-scan, sast-scan, build-and-scan, iac-scan, k8s-scan]
+    if: always()
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: all-results/
+
+      - name: Evaluate Security Gate
+        id: gate
+        run: |
+          chmod +x pipeline/scripts/gate-check.sh
+          pipeline/scripts/gate-check.sh all-results/
+
+      - name: Comment PR with Security Summary
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const summary = fs.readFileSync('security-summary.md', 'utf8');
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: summary
+            });
+
+  # ─────────────────────────────────────────────
+  # Stage 7: Sign & Push Images (only on main)
+  # ─────────────────────────────────────────────
+  sign-and-push:
+    name: "✍️ Sign & Push Images"
+    runs-on: ubuntu-latest
+    needs: [security-gate]
+    if: github.ref == 'refs/heads/main' && needs.security-gate.result == 'success'
+    strategy:
+      matrix:
+        service: [auth-service, transaction-service, frontend]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to ECR
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build & Push Image
+        run: |
+          IMAGE=${{ env.ECR_REGISTRY }}/secureflow/${{ matrix.service }}
+          docker build -t $IMAGE:${{ github.sha }} -t $IMAGE:latest ./app/${{ matrix.service }}
+          docker push $IMAGE:${{ github.sha }}
+          docker push $IMAGE:latest
+
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@main
+
+      - name: Sign Image with Cosign
+        run: |
+          IMAGE=${{ env.ECR_REGISTRY }}/secureflow/${{ matrix.service }}:${{ github.sha }}
+          cosign sign --key env://COSIGN_PRIVATE_KEY $IMAGE
+        env:
+          COSIGN_PRIVATE_KEY: ${{ secrets.COSIGN_PRIVATE_KEY }}
+          COSIGN_PASSWORD: ${{ secrets.COSIGN_PASSWORD }}
+
+      - name: Generate & Attach SBOM
+        run: |
+          IMAGE=${{ env.ECR_REGISTRY }}/secureflow/${{ matrix.service }}:${{ github.sha }}
+          
+          # Generate SBOM
+          trivy image --format spdx-json --output sbom-${{ matrix.service }}.json $IMAGE
+          
+          # Attach SBOM to image
+          cosign attach sbom --sbom sbom-${{ matrix.service }}.json $IMAGE
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sbom-${{ matrix.service }}
+          path: sbom-${{ matrix.service }}.json

@@ -1,0 +1,13 @@
+{
+  "name": "api-gateway",
+  "version": "1.0.0",
+  "description": "SecureFlow API Gateway — VULNERABLE (pre-hardening baseline)",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js"
+  },
+  "dependencies": {
+    "express": "4.17.1",
+    "http-proxy-middleware": "2.0.1"
+  }
+}
